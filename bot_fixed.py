@@ -1,3 +1,4 @@
+import os
 import random
 import time
 import requests
@@ -13,39 +14,32 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
 from datetime import datetime
-
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
-import os
 
 # Load .env file
 load_dotenv()
 # ======== Email Config ========
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")   
-EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
 
-def send_email(subject, body):
+def send_email(subject, body, receiver):
     try:
         msg = MIMEMultipart()
         msg["From"] = EMAIL_SENDER
-        msg["To"] = EMAIL_RECEIVER
+        msg["To"] = receiver
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "html"))
-
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-
-        print(f"✅ Email sent: {subject}")
-
+            server.sendmail(EMAIL_SENDER, receiver, msg.as_string())
+        print(f"✅ Email sent to {receiver}: {subject}")
     except Exception as e:
         print(f"❌ Email failed: {e}")
 
-# ======== Helper Functions ========
 
 def decrypt_response(encrypted_data):
     key = b"cvq@4202temoib!&"
@@ -62,29 +56,25 @@ def decrypt_response(encrypted_data):
 
 
 def get_visa_expiry_date(driver):
-    """Extract the last booking date from the modal content"""
     try:
         modal_text = driver.execute_script("""
             let modal = document.querySelector('modal-content');
             return modal ? modal.innerText : null;
         """)
         print(f"Modal text: {modal_text}")
-
         if modal_text:
-            # Extract "please choose the date on or before DD-Mon-YYYY"
             match = re.search(r'on or before (\d{2}-\w{3}-\d{4})', modal_text)
             if match:
                 date_str = match.group(1)
                 expiry = datetime.strptime(date_str, "%d-%b-%Y")
-                print(f" Booking deadline: {expiry.strftime('%d %B %Y')}")
+                print(f"✅ Booking deadline: {expiry.strftime('%d %B %Y')}")
                 return expiry
     except Exception as e:
-        print(f" Could not extract expiry date: {e}")
+        print(f"❌ Could not extract expiry date: {e}")
     return None
 
 
 def get_calendar_month_year(driver):
-    """Get current month and year shown in calendar"""
     return driver.execute_script("""
         let spans = document.querySelectorAll('.navigation__title span');
         if (spans.length >= 2) {
@@ -95,12 +85,10 @@ def get_calendar_month_year(driver):
 
 
 def get_available_dates_current_month(driver, deadline_date=None):
-    """Read available (enabled) dates from current calendar view"""
     data = driver.execute_script("""
         let available = [];
         let month = null;
         let year = null;
-
         try {
             let spans = document.querySelectorAll('.navigation__title span');
             if (spans.length >= 2) {
@@ -108,7 +96,6 @@ def get_available_dates_current_month(driver, deadline_date=None):
                 year = spans[1].innerText.trim();
             }
         } catch(e) {}
-
         let days = document.querySelectorAll(
             '.datepicker__day:not(.is-disabled):not(.is-hidden) button:not([disabled])'
         );
@@ -118,52 +105,37 @@ def get_available_dates_current_month(driver, deadline_date=None):
                 available.push({day: day, month: month, year: year});
             }
         });
-
         return {month: month, year: year, available: available};
     """)
-
     if not data:
         return []
-
     month = data['month']
     year = data['year']
     available = []
-
     for d in data['available']:
         try:
             date_str = f"{d['day']} {month} {year}"
             date_obj = datetime.strptime(date_str, "%d %B %Y")
-            # Filter by deadline if provided
             if deadline_date is None or date_obj <= deadline_date:
-                available.append({
-                    'date': date_str,
-                    'datetime': date_obj
-                })
+                available.append({'date': date_str, 'datetime': date_obj})
         except Exception as e:
             print(f"  Date parse error: {e}")
-
     return available
 
 
 def get_all_available_dates(driver, deadline_date=None):
-    """Navigate through all months up to deadline and collect available dates"""
     all_available = []
-
-    print("\n Scanning all months for available dates...")
-
-    # Wait for calendar to be visible
+    print("\n📅 Scanning all months for available dates...")
     wait.until(EC.presence_of_element_located((By.CLASS_NAME, "datepicker__calendar")))
     time.sleep(2)
 
-    max_months = 12  # safety limit
+    max_months = 12
     for month_num in range(max_months):
         current = get_calendar_month_year(driver)
         if not current:
             break
-
         print(f"\n  Checking: {current['month']} {current['year']}")
 
-        # Check if this month is past the deadline
         if deadline_date:
             try:
                 month_start = datetime.strptime(f"1 {current['month']} {current['year']}", "%d %B %Y")
@@ -173,27 +145,23 @@ def get_all_available_dates(driver, deadline_date=None):
             except:
                 pass
 
-        # Get available dates in this month
         month_dates = get_available_dates_current_month(driver, deadline_date)
         if month_dates:
-            print(f"   Found {len(month_dates)} available date(s):")
+            print(f"  ✅ Found {len(month_dates)} available date(s):")
             for d in month_dates:
                 print(f"     → {d['date']}")
             all_available.extend(month_dates)
         else:
-            print(f"   No available dates")
+            print(f"  ❌ No available dates")
 
-        # Check if next button is disabled (no more months)
         next_disabled = driver.execute_script("""
             let btn = document.querySelector('.navigation__button.is-next');
             return btn ? btn.disabled : true;
         """)
-
         if next_disabled:
             print("  ⏹ No more months available")
             break
 
-        # Check if next month would exceed deadline
         if deadline_date:
             try:
                 current_dt = datetime.strptime(f"1 {current['month']} {current['year']}", "%d %B %Y")
@@ -206,7 +174,6 @@ def get_all_available_dates(driver, deadline_date=None):
             except:
                 pass
 
-        # Click next month button
         next_btn = driver.find_element(By.CSS_SELECTOR, ".navigation__button.is-next")
         driver.execute_script("arguments[0].click();", next_btn)
         print(f"  ➡ Moving to next month...")
@@ -215,17 +182,37 @@ def get_all_available_dates(driver, deadline_date=None):
     return all_available
 
 
-def solve_captcha(driver, wait):
-    print("Solving captcha...")
-    time.sleep(2)
+def get_captcha_src(driver):
+    """Get current captcha image src"""
+    try:
+        img = driver.find_element(By.ID, "captchaImage")
+        return img.get_attribute("src")
+    except:
+        return None
 
+
+def captcha_is_refreshed(driver, old_src):
+    """Check if captcha has been refreshed by comparing src"""
+    new_src = get_captcha_src(driver)
+    if new_src is None:
+        return False  # captcha not on page = success
+    return new_src != old_src
+
+
+def solve_captcha_once(driver, wait):
+    """Solve captcha and return (captcha_text, src) or raise exception"""
+    time.sleep(2)
     img = wait.until(EC.presence_of_element_located((By.ID, "captchaImage")))
     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", img)
     time.sleep(random.uniform(0.5, 1.0))
 
     src = img.get_attribute("src")
+    if not src or "base64" not in src:
+        raise Exception("Captcha image not loaded properly")
+
     base64_data = src.split(",", 1)[1]
 
+    # Submit to 2captcha
     captcha_id = None
     for slot_attempt in range(5):
         response = requests.post("https://2captcha.com/in.php", data={
@@ -241,7 +228,7 @@ def solve_captcha(driver, wait):
             print(f"Captcha submitted (ID: {captcha_id}), waiting for solution...")
             break
         elif result["request"] == "ERROR_NO_SLOT_AVAILABLE":
-            print(f" No slot available, retrying in 5s... ({slot_attempt + 1}/5)")
+            print(f"⚠️ No slot available, retrying in 5s... ({slot_attempt + 1}/5)")
             time.sleep(5)
         else:
             raise Exception(f"2captcha submission failed: {result['request']}")
@@ -249,6 +236,7 @@ def solve_captcha(driver, wait):
     if not captcha_id:
         raise Exception("2captcha has no slots available after 5 retries.")
 
+    # Poll for result
     captcha_text = None
     for attempt in range(24):
         time.sleep(5)
@@ -258,10 +246,9 @@ def solve_captcha(driver, wait):
             "id": captcha_id,
             "json": 1
         }).json()
-
         if res["status"] == 1:
             captcha_text = res["request"]
-            print(f" Captcha solved: {captcha_text}")
+            print(f"✅ Captcha solved: {captcha_text}")
             break
         elif res["request"] == "CAPCHA_NOT_READY":
             print(f"  Not ready yet... ({attempt + 1}/24)")
@@ -271,16 +258,30 @@ def solve_captcha(driver, wait):
     if not captcha_text:
         raise Exception("Timed out waiting for captcha solution")
 
-    img_after = driver.find_element(By.ID, "captchaImage")
-    if img_after.get_attribute("src") != src:
-        print("⚠️ Captcha changed while solving! Re-solving...")
-        return solve_captcha(driver, wait)
+    # Check captcha hasn't changed while solving
+    current_src = get_captcha_src(driver)
+    if current_src and current_src != src:
+        raise Exception("Captcha refreshed while solving")
 
+    return captcha_text, src
+
+
+def enter_captcha(driver, wait, captcha_text):
+    """Type captcha into input field"""
     captcha_input = wait.until(
         EC.presence_of_element_located((By.XPATH,
             "//input[@placeholder='Enter Captcha'] | //input[@id='captchaCode'] | //input[@name='captcha']"
         ))
     )
+    # Clear first
+    driver.execute_script("""
+        var el = arguments[0];
+        var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(el, '');
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    """, captcha_input)
+
     ActionChains(driver).move_to_element(captcha_input).pause(random.uniform(0.3, 0.7)).click().perform()
     time.sleep(0.5)
 
@@ -292,10 +293,8 @@ def solve_captcha(driver, wait):
         current_value = captcha_text[:i + 1]
         driver.execute_script("""
             var el = arguments[0];
-            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype, 'value'
-            ).set;
-            nativeInputValueSetter.call(el, arguments[1]);
+            var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            setter.call(el, arguments[1]);
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
         """, captcha_input, current_value)
@@ -305,21 +304,116 @@ def solve_captcha(driver, wait):
                 (total_time / total_chars) * 0.6,
                 (total_time / total_chars) * 1.4
             ))
-
-    print(" Captcha fully entered")
-    time.sleep(random.uniform(1.5, 2.5))
-
-    print("Waiting for submit button to enable...")
-    enabled_btn = WebDriverWait(driver, 15).until(
-        EC.element_to_be_clickable((By.XPATH,
-            "//button[contains(@class,'btn-brand-arrow') and not(@disabled)]"
-        ))
-    )
-    ActionChains(driver).move_to_element(enabled_btn).pause(random.uniform(0.3, 0.6)).click().perform()
-    print("✅ Form submitted!")
-    return captcha_text
+    print("✅ Captcha fully entered")
 
 
+def check_and_dismiss_modal(driver, wait_time=5):
+    """Check if modal appeared and click OK. Returns True if modal was found."""
+    ok_xpaths = [
+        "//button[normalize-space()='Ok']",
+        "//button[normalize-space()='OK']",
+        "//div[contains(@class,'appt')]//button[normalize-space()='Ok']",
+        "//div[contains(@class,'appt')]//button[normalize-space()='OK']",
+    ]
+    for xpath in ok_xpaths:
+        try:
+            ok_button = WebDriverWait(driver, wait_time).until(
+                EC.element_to_be_clickable((By.XPATH, xpath))
+            )
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", ok_button)
+            driver.execute_script("arguments[0].click();", ok_button)
+            print("✅ Modal OK clicked")
+            time.sleep(1)
+            return True
+        except TimeoutException:
+            continue
+    return False
+
+
+def solve_captcha_and_submit(driver, wait, max_retries=10):
+    """
+    Main loop:
+    1. Solve captcha
+    2. Submit
+    3. If modal appears → click OK → check if captcha refreshed → retry if yes
+    4. If no modal → success
+    """
+    for attempt in range(max_retries):
+        print(f"\n🔄 Captcha+Submit attempt {attempt + 1}/{max_retries}")
+
+        try:
+            # Step 1: Solve captcha
+            print("Solving captcha...")
+            captcha_text, src = solve_captcha_once(driver, wait)
+
+        except Exception as e:
+            print(f"⚠️ Captcha solve error: {e}, retrying...")
+            time.sleep(3)
+            continue
+
+        try:
+            # Step 2: Enter captcha
+            enter_captcha(driver, wait, captcha_text)
+            time.sleep(random.uniform(1.5, 2.5))
+
+            # Step 3: Wait for submit button and click
+            print("Waiting for submit button to enable...")
+            try:
+                enabled_btn = WebDriverWait(driver, 15).until(
+                    EC.element_to_be_clickable((By.XPATH,
+                        "//button[contains(@class,'btn-brand-arrow') and not(@disabled)]"
+                    ))
+                )
+            except TimeoutException:
+                print("⚠️ Submit button didn't enable — captcha likely wrong, retrying...")
+                time.sleep(2)
+                continue
+
+            ActionChains(driver).move_to_element(enabled_btn).pause(random.uniform(0.3, 0.6)).click().perform()
+            print("✅ Submit clicked!")
+            time.sleep(3)
+
+            # Step 4: Check if modal appeared
+            modal_appeared = check_and_dismiss_modal(driver, wait_time=5)
+
+            if modal_appeared:
+                print("⚠️ Modal appeared after submit, checking if captcha refreshed...")
+                time.sleep(2)
+
+                # Check if captcha is still on page and refreshed
+                current_src = get_captcha_src(driver)
+
+                if current_src is None:
+                    # Captcha not on page = navigated away = success
+                    print("✅ Captcha gone — submission successful!")
+                    return True
+
+                if current_src != src:
+                    print("⚠️ Captcha was refreshed after modal — re-solving...")
+                    continue  # go back to step 1
+
+                else:
+                    print("⚠️ Same captcha still showing — retrying submit...")
+                    continue
+
+            else:
+                # No modal — check if we navigated away
+                time.sleep(2)
+                current_src = get_captcha_src(driver)
+
+                if current_src is None:
+                    print("✅ No modal, captcha gone — submission successful!")
+                    return True
+                else:
+                    print("⚠️ Still on captcha page, no modal — retrying...")
+                    continue
+
+        except Exception as e:
+            print(f"⚠️ Submit attempt error: {e}, retrying...")
+            time.sleep(3)
+            continue
+
+    raise Exception(f"❌ Failed after {max_retries} captcha+submit attempts")
 
 
 def click_modal_ok(driver, wait_time=10):
@@ -336,7 +430,7 @@ def click_modal_ok(driver, wait_time=10):
             )
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", ok_button)
             driver.execute_script("arguments[0].click();", ok_button)
-            print(" Modal OK clicked")
+            print("✅ Modal OK clicked")
             time.sleep(1)
             return
         except TimeoutException:
@@ -356,7 +450,7 @@ driver = uc.Chrome(options=options, version_main=145)
 driver.maximize_window()
 
 wait = WebDriverWait(driver, 20)
-API_KEY = os.getenv("API_KEY")
+API_KEY =os.getenv("API_KEY")
 
 # ======== Main ========
 
@@ -399,10 +493,10 @@ visa_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@placehol
 visa_input.send_keys(visa_number)
 print("Visa number entered")
 
-# Solve Captcha & Submit
-solve_captcha(driver, wait)
+# -------- Dynamic Captcha + Submit Loop --------
+solve_captcha_and_submit(driver, wait)
 
-# Handle modals — extract visa expiry from first modal before closing
+# Extract visa expiry from modal if present
 print("Checking for visa expiry info in modal...")
 time.sleep(2)
 deadline_date = get_visa_expiry_date(driver)
@@ -465,7 +559,7 @@ confirm_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[@transl
 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", confirm_btn)
 time.sleep(random.uniform(0.5, 1.0))
 driver.execute_script("arguments[0].click();", confirm_btn)
-print(" Confirm button clicked!")
+print("✅ Confirm button clicked!")
 
 # Modal OK on new page
 print("Waiting for modal OK button...")
@@ -475,7 +569,7 @@ modal_ok = WebDriverWait(driver, 30).until(
 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", modal_ok)
 time.sleep(random.uniform(0.5, 1.0))
 driver.execute_script("arguments[0].click();", modal_ok)
-print(" Modal OK clicked!")
+print("✅ Modal OK clicked!")
 
 # Wait for slot details page
 wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
@@ -494,36 +588,33 @@ city_option = wait.until(EC.element_to_be_clickable((By.XPATH,
     f"//ul[contains(@class,'dropdown-menu')]//a[text()='{city}']"
 )))
 driver.execute_script("arguments[0].click();", city_option)
-print(f" City '{city}' selected!")
+print(f"✅ City '{city}' selected!")
 time.sleep(3)
 
-# Print deadline info
 if deadline_date:
-    print(f"\n Booking deadline: {deadline_date.strftime('%d %B %Y')}")
+    print(f"\n⏰ Booking deadline: {deadline_date.strftime('%d %B %Y')}")
 else:
-    print("\n No deadline found, scanning all available months")
+    print("\n⚠️ No deadline found, scanning all available months")
 
-# Scan all months and collect available dates up to deadline
+# Scan all months
 all_available = get_all_available_dates(driver, deadline_date)
 
-# Final summary
 # Final summary + Email
 print(f"\n{'='*50}")
 print(f"📅 AVAILABLE APPOINTMENT DATES")
 print(f"{'='*50}")
+
+deadline_str = deadline_date.strftime('%d %B %Y') if deadline_date else "N/A"
 
 if all_available:
     for d in all_available:
         print(f"  ✅ {d['date']}")
     print(f"\nTotal: {len(all_available)} available slot(s)")
 
-    # Build email body
     dates_html = "".join([f"<li>✅ {d['date']}</li>" for d in all_available])
-    deadline_str = deadline_date.strftime('%d %B %Y') if deadline_date else "N/A"
-
     body = f"""
     <html><body>
-    <h2> Appointment Slots Available!</h2>
+    <h2>🟢 Appointment Slots Available!</h2>
     <p><b>Passport:</b> {passport_number}</p>
     <p><b>Visa:</b> {visa_number}</p>
     <p><b>City:</b> {city}</p>
@@ -534,28 +625,12 @@ if all_available:
     </body></html>
     """
     send_email(
-        subject=f" Qatar Visa Appointment Available — {city}",
-        body=body
+        subject=f"🟢 Qatar Visa Appointment Available — {city}",
+        body=body,
+        receiver=email_address
     )
-
 else:
-    print("  No available dates found before visa expiry")
-
-    deadline_str = deadline_date.strftime('%d %B %Y') if deadline_date else "N/A"
-    body = f"""
-    <html><body>
-    <h2> No Appointment Slots Available</h2>
-    <p><b>Passport:</b> {passport_number}</p>
-    <p><b>Visa:</b> {visa_number}</p>
-    <p><b>City:</b> {city}</p>
-    <p><b>Booking Deadline:</b> {deadline_str}</p>
-    <p>No available appointment slots were found before the visa expiry deadline.</p>
-    <p>Please check again later.</p>
-    </body></html>
-    """
-    send_email(
-        subject=f" No Qatar Visa Appointment Available — {city}",
-        body=body
-    )
-
+    print("  ❌ No available dates found before visa expiry")
 print(f"{'='*50}")
+driver.save_screenshot("final.png")
+print("\n✅ All done!")
