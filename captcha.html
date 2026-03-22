@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AES Decryption Tool</title>
+
+    <!-- CryptoJS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 30px;
+            background: #f0f2f5;
+        }
+
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            max-width: 700px;
+            margin: auto;
+        }
+
+        h2 {
+            color: #333;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+
+        textarea {
+            width: 100%;
+            font-family: monospace;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            resize: vertical;
+        }
+
+        button {
+            margin-top: 10px;
+            padding: 10px 18px;
+            border: none;
+            border-radius: 6px;
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #45a049;
+        }
+
+        #result {
+            background: #272822;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: monospace;
+            min-height: 60px;
+            margin-top: 20px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .label {
+            font-weight: bold;
+            color: #555;
+            margin-top: 15px;
+        }
+
+        .error {
+            color: #ff6b6b;
+        }
+
+        .success {
+            color: #8be9fd;
+        }
+
+        .copy-btn {
+            background: #2196F3;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+    <h2>AES Decryption Tool</h2>
+
+    <div class="label">🔑 Key Used:</div>
+    <div style="font-family: monospace;">cvq@4202temoib!&</div>
+
+    <div class="label">📥 Enter Encrypted Data (Raw or JSON):</div>
+    <textarea id="inputData" rows="5" placeholder='Paste encrypted string OR {"encryptedData": "..."}'></textarea>
+
+    <button onclick="decryptNow()">Decrypt</button>
+    <button class="copy-btn" onclick="copyResult()">Copy Result</button>
+
+    <div id="result">Waiting for input...</div>
+</div>
+
+<script>
+const secretKeyString = "cvq@4202temoib!&";
+
+function decryptNow() {
+    let input = document.getElementById("inputData").value.trim();
+    const resultBox = document.getElementById("result");
+
+    if (!input) {
+        resultBox.innerHTML = "<span class='error'>Please enter encrypted data.</span>";
+        return;
+    }
+
+    try {
+        // ✅ Detect JSON input
+        let encryptedData = input;
+        if (input.startsWith("{")) {
+            const parsed = JSON.parse(input);
+            if (!parsed.encryptedData) {
+                throw new Error("JSON must contain 'encryptedData' field");
+            }
+            encryptedData = parsed.encryptedData;
+        }
+
+        // 🔐 Prepare key + IV
+        const key = CryptoJS.enc.Utf8.parse(secretKeyString);
+        const iv = CryptoJS.enc.Utf8.parse(secretKeyString);
+
+        // 🔓 Decrypt
+        const decrypted = CryptoJS.AES.decrypt(encryptedData, key, {
+            iv: iv,
+            mode: CryptoJS.mode.CBC,
+            padding: CryptoJS.pad.Pkcs7
+        });
+
+        let decryptedString = decrypted.toString(CryptoJS.enc.Utf8);
+
+        if (!decryptedString) {
+            resultBox.innerHTML = "<span class='error'>[!] Decryption failed. Wrong key or invalid data.</span>";
+            return;
+        }
+
+        // ✅ Try to pretty print JSON
+        try {
+            const jsonObj = JSON.parse(decryptedString);
+            decryptedString = JSON.stringify(jsonObj, null, 2);
+        } catch (e) {
+            // Not JSON → keep raw
+        }
+
+        resultBox.innerHTML = "<span class='success'>" + escapeHtml(decryptedString) + "</span>";
+
+    } catch (e) {
+        resultBox.innerHTML = "<span class='error'>Error: " + e.message + "</span>";
+    }
+}
+
+// 🔒 Prevent HTML injection
+function escapeHtml(text) {
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+
+// 📋 Copy result
+function copyResult() {
+    const text = document.getElementById("result").innerText;
+
+    if (!text || text === "Waiting for input...") {
+        alert("Nothing to copy!");
+        return;
+    }
+
+    navigator.clipboard.writeText(text)
+        .then(() => alert("Copied to clipboard!"))
+        .catch(() => alert("Copy failed."));
+}
+</script>
+
+</body>
+</html>
